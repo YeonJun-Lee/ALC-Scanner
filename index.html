@@ -105,6 +105,7 @@ textarea{width:100%;min-height:120px;font-family:var(--mono);font-size:16px;padd
 .flash.go{animation:flashfade var(--fd,900ms) ease-out forwards}
 @keyframes flashfade{0%,55%{opacity:.96}100%{opacity:0}}
 @media (prefers-reduced-motion:reduce){@keyframes flashfade{0%,90%{opacity:.96}100%{opacity:0}}}
+.next .meta .poschip{background:var(--ink);color:var(--bg);font-family:var(--mono);font-weight:700;letter-spacing:.02em;text-transform:none;padding:1px 8px;border-radius:6px;font-size:15px}
 .example-tag{font-size:12px;background:var(--warn-bg);color:var(--warn);padding:2px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:.06em;align-self:flex-start}
 </style>
 
@@ -134,7 +135,7 @@ textarea{width:100%;min-height:120px;font-family:var(--mono);font-size:16px;padd
   <section id="run" hidden style="display:flex;flex-direction:column;gap:14px">
     <span class="example-tag" id="exampleTag" hidden>Example sheet</span>
     <div class="next" id="nextCard">
-      <div class="meta"><span>Slot <b id="nSlot">–</b></span><span>Seq <b id="nSeq">–</b></span><span>Body <b id="nBody">–</b></span></div>
+      <div class="meta"><span class="poschip" id="nPos" hidden></span><span>Slot <b id="nSlot">–</b></span><span>Seq <b id="nSeq">–</b></span><span>Body <b id="nBody">–</b></span></div>
       <div class="lbl">Next part</div>
       <div class="bigcode" id="nCode">----</div>
     </div>
@@ -239,6 +240,14 @@ function checkScan(parsed){
     if(dup){ beep(false); showResult("bad", `Already scanned: this label is in slot ${dup.slot}.<small class="mono">Serial ${esc(parsed.serial)}</small>`); flash("red","ALREADY SCANNED",`Slot ${dup.slot}`); return; }
   }
   const row = S.rows[i];
+  // install position: door trim part numbers 8230x = front, 8330x = rear; ...1 = left, ...2 = right
+  const side = posFromPart(parsed.part);
+  if(S.pos && side && side !== S.pos){
+    beep(false);
+    showResult("bad", `Wrong install position. This is a <b>${side}</b> part (${esc(parsed.part)}), the sheet is <b>${S.pos}</b>.`);
+    flash("red", "WRONG SIDE", `${side} part · sheet is ${S.pos}`);
+    return;
+  }
   if(norm(parsed.code)===norm(row.code)){
     row.status="ok"; row.serial=parsed.serial||null; row.part=parsed.part||null;
     S.history.push(i); save(); beep(true);
@@ -265,6 +274,7 @@ function render(){
   if(!S){ $("sheetName").textContent="No sheet loaded"; $("count").textContent="0 / 0"; $("barFill").style.width="0"; return; }
   const done = S.rows.filter(r=>r.status==="ok").length, n = S.rows.length;
   $("sheetName").textContent = S.name || "Sequence sheet";
+  $("nPos").hidden = !S.pos; $("nPos").textContent = S.pos ? "Install " + S.pos : "";
   $("count").textContent = `${done} / ${n}`;
   $("barFill").style.width = n ? (100*done/n)+"%" : "0";
   $("exampleTag").hidden = !S.example;
@@ -282,9 +292,15 @@ function render(){
   }).join("");
 }
 function startFrom(d){
-  S = {name:d.name, codeHead:d.codeHead, example:!!d.example, history:[],
+  S = {name:d.name, codeHead:d.codeHead, pos:d.pos||"", example:!!d.example, history:[],
        rows:d.rows.filter(r=>r.code).map(r=>({slot:r.slot,seq:r.seq,body:r.body,code:String(r.code).toUpperCase(),status:"pending"}))};
   save(); show("run"); showResult("info","Scan the first part."); render();
+}
+
+function posFromPart(part){
+  const m = String(part||"").match(/^8([23])30([12])/);
+  if(!m) return "";
+  return (m[1]==="2" ? "F" : "R") + (m[2]==="1" ? "L" : "R");
 }
 
 // ---------- scanning ----------
@@ -335,11 +351,13 @@ const isSheetCode = raw => /^\s*PCK1\|/i.test(String(raw||""));
 function decodeSheet(raw){
   const parts = String(raw).trim().split("|");
   if(parts.length < 4) return null;
-  const rows = parts.slice(3).join("|").split(";").map(x=>x.trim()).filter(Boolean).map((x,k)=>{
+  const meta = {}; parts.slice(4).forEach(p=>{ const m = p.match(/^([A-Z]+)=(.*)$/i); if(m) meta[m[1].toUpperCase()] = m[2].trim().toUpperCase(); });
+  const rows = parts[3].split(";").map(x=>x.trim()).filter(Boolean).map((x,k)=>{
     const c = x.split(",").map(v=>v.trim());
     return c.length >= 4 ? {slot:c[0]||k+1, seq:c[1], body:c[2], code:c[3].toUpperCase()} : {slot:k+1, seq:"", body:"", code:c[c.length-1].toUpperCase()};
   }).filter(r=>r.code);
-  return rows.length ? {name:parts[1], codeHead:parts[2]||"Code", rows} : null;
+  const pos = /^(FL|FR|RL|RR)$/.test(meta.POS||"") ? meta.POS : "";
+  return rows.length ? {name:parts[1], codeHead:parts[2]||"Code", rows, pos} : null;
 }
 let pendingSheet = null;
 function handleScan(raw){
@@ -365,12 +383,12 @@ function handleScan(raw){
     $("switchBar").hidden = false; flash("yellow","NEW SHEET?"); return;
   }
   beep(true); startFrom(sh);
-  showResult("ok", `Loaded ${esc(sh.name || "sheet")}: ${sh.rows.length} slots.<small>Scan the first part.</small>`, "SHEET LOADED");
+  showResult("ok", `Loaded ${esc(sh.name || "sheet")}: ${sh.rows.length} slots${sh.pos ? ", install " + sh.pos : ""}.<small>Scan the first part.</small>`, sh.pos ? "SHEET LOADED · " + sh.pos : "SHEET LOADED");
 }
 $("switchYes").addEventListener("click", ()=>{
   $("switchBar").hidden = true; if(!pendingSheet) return;
   const sh = pendingSheet; pendingSheet = null; startFrom(sh);
-  showResult("ok", `Loaded ${esc(sh.name || "sheet")}: ${sh.rows.length} slots.<small>Scan the first part.</small>`, "SHEET LOADED");
+  showResult("ok", `Loaded ${esc(sh.name || "sheet")}: ${sh.rows.length} slots${sh.pos ? ", install " + sh.pos : ""}.<small>Scan the first part.</small>`, sh.pos ? "SHEET LOADED · " + sh.pos : "SHEET LOADED");
 });
 $("switchNo").addEventListener("click", ()=>{ $("switchBar").hidden = true; pendingSheet = null; });
 

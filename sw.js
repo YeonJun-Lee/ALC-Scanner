@@ -1,5 +1,5 @@
 // Pallet Check offline cache. Bump VERSION when the app changes.
-const VERSION = "pc-1792559555";
+const VERSION = "pc-1792560146";
 const CORE = ["./", "./index.html", "./sheet-maker.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-180.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));

@@ -36,6 +36,17 @@ button{font-family:var(--display);font-weight:600;font-size:18px;border:0;border
 button:disabled{opacity:.45;cursor:default}
 .info{border-radius:10px;padding:10px 12px;font-size:15px;background:var(--bg);color:var(--muted)}
 .info.ok{background:var(--ok-bg);color:var(--ok)}.info.warn{background:var(--warn-bg);color:var(--warn)}
+.posblock{display:flex;flex-direction:column;gap:6px;border:2px solid var(--hi);border-radius:12px;padding:10px 12px;background:var(--bg)}
+.posblock.missing{border-color:#d32f2f}
+.req{font-size:11px;letter-spacing:.04em;background:var(--hi);color:var(--hi-ink);padding:2px 6px;border-radius:99px;margin-left:6px;text-transform:none}
+.seg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.seg button{margin:0;min-height:58px;padding:6px 4px;font-family:var(--mono);font-size:20px;background:var(--surface);color:var(--ink);border:1.5px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:2px}
+.seg button small{font-family:var(--display);font-size:11px;font-weight:500;color:var(--muted)}
+.seg button[aria-checked="true"]{background:var(--btn);color:var(--btn-ink);border-color:var(--btn)}
+.seg button[aria-checked="true"] small{color:var(--btn-ink)}
+.ppos{display:flex;flex-direction:column;align-items:center;border:3px solid #111;border-radius:6px;padding:4px 18px}
+.ppos small{font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.ppos b{font-family:var(--mono);font-size:40px;line-height:1.05}
 .previewhead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
 .previewhead h2{margin:0;font-size:18px}
 #printArea{display:flex;flex-direction:column;gap:20px}
@@ -62,6 +73,7 @@ button:disabled{opacity:.45;cursor:default}
   .psheet th{font-size:11pt}
   .pname{font-size:30pt}
   .pqr{max-width:62mm}
+  .ppos b{font-size:44pt}
 }
 </style>
 
@@ -76,6 +88,15 @@ button:disabled{opacity:.45;cursor:default}
     <label class="lbl" for="mkName">First sheet name</label>
     <input id="mkName" value="Line 1 D/Trim FL 7">
     <div class="info" style="font-size:13px">A number at the end counts up for each page: FL 7, FL 8, FL 9…</div>
+    <div id="posBlock" class="posblock" hidden>
+      <div class="lbl">Install position <span class="req">Required for D/Trim</span></div>
+      <div class="seg" id="posSeg" role="radiogroup" aria-label="Install position">
+        <button type="button" role="radio" aria-checked="false" data-pos="FL">FL<small>Front left</small></button>
+        <button type="button" role="radio" aria-checked="false" data-pos="FR">FR<small>Front right</small></button>
+        <button type="button" role="radio" aria-checked="false" data-pos="RL">RL<small>Rear left</small></button>
+        <button type="button" role="radio" aria-checked="false" data-pos="RR">RR<small>Rear right</small></button>
+      </div>
+    </div>
     <label class="lbl" for="mkPer">Rows per sheet</label>
     <input id="mkPer" type="number" min="1" max="40" value="20" style="width:7em">
     <label class="lbl" for="mkRows">Rows from Excel</label>
@@ -2394,11 +2415,22 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s??"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 // Sheet QR format read by Pallet Check: PCK1|<sheet name>|<code column header>|<slot>,<seq>,<body>,<code>;...
+// Optional extras after the rows: |POS=FL (install position, required for D/Trim)
 function encodeSheet(sh){
   const clean = v => String(v??"").replace(/[|;,\r\n\t]/g," ").replace(/\s+/g," ").trim();
   return "PCK1|" + clean(sh.name) + "|" + clean(sh.codeHead||"Code") + "|" +
-    sh.rows.map(r=>[clean(r.slot),clean(r.seq),clean(r.body),clean(r.code).toUpperCase()].join(",")).join(";");
+    sh.rows.map(r=>[clean(r.slot),clean(r.seq),clean(r.body),clean(r.code).toUpperCase()].join(",")).join(";") +
+    (sh.pos ? "|POS=" + sh.pos : "");
 }
+// ---------- install position ----------
+let pos = "", posPicked = false;
+const isDTrim = name => /d\s*\/?\s*trim/i.test(name);
+const posInName = name => { const m = String(name).toUpperCase().match(/\b(FL|FR|RL|RR)\b/); return m ? m[1] : ""; };
+function setPos(p, picked){
+  pos = p; if(picked) posPicked = true;
+  document.querySelectorAll("#posSeg button").forEach(b=>b.setAttribute("aria-checked", String(b.dataset.pos===p)));
+}
+$("posSeg").addEventListener("click", e=>{ const b = e.target.closest("button[data-pos]"); if(b){ setPos(b.dataset.pos, true); build(); } });
 function parsePasted(text){
   const lines = String(text).replace(/\r/g,"").split("\n").filter(l=>l.trim());
   let head = "Code"; const rows = [];
@@ -2423,10 +2455,14 @@ function build(){
   const {head, rows} = parsePasted($("mkRows").value);
   const per = Math.max(1, parseInt($("mkPer").value,10) || 20);
   const base = $("mkName").value.trim() || "Sequence sheet";
+  const dtrim = isDTrim(base);
+  $("posBlock").hidden = !dtrim;
+  if(dtrim && !posPicked){ setPos(posInName(base), false); }
+  const usePos = dtrim ? pos : "";
   const sheets = [];
   for(let i=0;i<rows.length;i+=per){
     const chunk = rows.slice(i,i+per).map((r,k)=>({...r, slot: rows.length>per ? String(k+1) : r.slot}));
-    sheets.push({name: nextName(base, sheets.length), codeHead: head, rows: chunk});
+    sheets.push({name: nextName(base, sheets.length), codeHead: head, rows: chunk, pos: usePos});
   }
   const bad = rows.filter(r=>!/^[A-Z0-9]{4}$/.test(r.code)).length;
   const info = $("mkInfo");
@@ -2434,12 +2470,17 @@ function build(){
   else if(!rows.length){ info.className="info warn"; info.textContent="No table rows found. Copy the cells straight from Excel, starting at the slot column."; }
   else { info.className = bad ? "info warn" : "info ok";
     info.textContent = `${rows.length} rows → ${sheets.length} sheet${sheets.length>1?"s":""}` + (bad ? `. ${bad} code${bad>1?"s are":" is"} not 4 characters; check before printing.` : ". Ready to print."); }
-  $("mkPrint").disabled = !sheets.length;
+  const nameP = posInName(base);
+  const missingPos = dtrim && !usePos;
+  $("posBlock").classList.toggle("missing", missingPos && rows.length > 0);
+  if(rows.length && missingPos){ info.className="info warn"; info.textContent="D/Trim sheet: choose the install position (FL, FR, RL or RR) before printing."; }
+  else if(rows.length && dtrim && nameP && nameP !== usePos){ info.className="info warn"; info.textContent=`The sheet name says ${nameP} but the install position is ${usePos}. Check which is right before printing.`; }
+  $("mkPrint").disabled = !sheets.length || missingPos;
   $("pageCount").textContent = sheets.length ? `${sheets.length} page${sheets.length>1?"s":""}` : "";
   $("printArea").innerHTML = sheets.length ? sheets.map(sh=>
     `<div class="psheet"><div><table><thead><tr><th>slot</th><th>MES SEQ</th><th>BODY-NO</th><th>${esc(sh.codeHead)}</th></tr></thead><tbody>${
       sh.rows.map(r=>`<tr><td>${esc(r.slot)}</td><td class="seq">${esc(r.seq)}</td><td>${esc(r.body)}</td><td class="code">${esc(r.code)}</td></tr>`).join("")
-    }</tbody></table></div><div class="pside"><div class="pname">${esc(sh.name)}</div><div class="pqr">${qrSvg(encodeSheet(sh))}</div><div class="pcap">Scan with Pallet Check · ${sh.rows.length} slots</div></div></div>`
+    }</tbody></table></div><div class="pside"><div class="pname">${esc(sh.name)}</div>${sh.pos ? `<div class="ppos"><small>Install position</small><b>${esc(sh.pos)}</b></div>` : ""}<div class="pqr">${qrSvg(encodeSheet(sh))}</div><div class="pcap">Scan with Pallet Check · ${sh.rows.length} slots</div></div></div>`
   ).join("") : `<div class="empty">The printed sheets appear here, one per page, each with its own QR code.</div>`;
 }
 ["mkRows","mkName","mkPer"].forEach(id=>$(id).addEventListener("input", build));
